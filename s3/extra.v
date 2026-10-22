@@ -2,10 +2,12 @@
 // encryption, and the documents S3 stores without this process acting further.
 module s3
 
+import os
 import net.http
 import bucketcfg
 import iam
 import json2
+import store
 
 fn esc_owner(value string) string {
 	return value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -104,14 +106,20 @@ fn (s Service) preflight(req http.Request, target Target) http.Response {
 		return failure(http.Status.forbidden, 'AccessDenied', 'missing origin', target.bucket, '')
 	}
 	method := req.header.get_custom('access-control-request-method') or { 'GET' }
-	raw := s.volume.get_doc(target.bucket, 'cors') or {
-		return failure(http.Status.forbidden, 'AccessDenied', 'cors is not configured', target.bucket, '')
-	}
-	config := json2.decode[bucketcfg.Cors](raw.bytestr()) or {
-		return failure(http.Status.bad_request, 'MalformedXML', '${err}', target.bucket, '')
-	}
-	rule := bucketcfg.cors_match(config.rules, origin, method) or {
-		return failure(http.Status.forbidden, 'AccessDenied', 'origin is not allowed', target.bucket, '')
+	raw := s.volume.get_doc(target.bucket, 'cors') or { []u8{} }
+	mut rule := bucketcfg.CorsRule{}
+	if raw.len == 0 {
+		found := global_cors(origin, method) or {
+			return failure(http.Status.forbidden, 'AccessDenied', 'cors is not configured', target.bucket, '')
+		}
+		rule = found
+	} else {
+		config := json2.decode[bucketcfg.Cors](raw.bytestr()) or {
+			return failure(http.Status.bad_request, 'MalformedXML', '${err}', target.bucket, '')
+		}
+		rule = bucketcfg.cors_match(config.rules, origin, method) or {
+			return failure(http.Status.forbidden, 'AccessDenied', 'origin is not allowed', target.bucket, '')
+		}
 	}
 	mut header := http.new_header()
 	header.add_custom('access-control-allow-origin', origin) or {}
@@ -134,20 +142,95 @@ fn (s Service) website(req http.Request, target Target) ?http.Response {
 	site := json2.decode[bucketcfg.Website](raw.bytestr()) or { return none }
 	host := req.header.get_custom('host') or { '' }
 	if site.redirect.len > 0 && host == site.host {
-		mut header := http.new_header()
-		header.add_custom('location', site.redirect) or {}
-		return http.new_response(
-			status: .found
-			body:   ''
-			header: header
-		)
+		return redirect_to(site.redirect, http.Status.found)
+	}
+	rule_location := bucketcfg.website_redirect(site, host, target.key)
+	if rule_location.len > 0 {
+		return redirect_to(rule_location, http.Status.moved_permanently)
+	}
+	if target.key.len > 0 {
+		if stat := s.volume.stat(target.bucket, target.key) {
+			object_location := stat.user_meta['website-redirect-location'] or { '' }
+			if object_location.len > 0 && host == site.host {
+				return redirect_to(object_location, http.Status.moved_permanently)
+			}
+		}
 	}
 	key := bucketcfg.website_key(site, host, target.key) or { return none }
-	body := s.volume.get(target.bucket, key, []u8{}) or { return none }
+	body := s.volume.get(target.bucket, key, []u8{}) or {
+		if site.error_doc.len == 0 {
+			return none
+		}
+		err_body := s.volume.get(target.bucket, site.error_doc, []u8{}) or { return none }
+		return http.new_response(
+			status: .not_found
+			body:   err_body.bytestr()
+		)
+	}
 	return http.new_response(
 		status: .ok
 		body:   body.bytestr()
 	)
+}
+
+fn redirect_to(location string, status http.Status) http.Response {
+	mut header := http.new_header()
+	header.add_custom('location', location) or {}
+	return http.new_response(
+		status: status
+		body:   ''
+		header: header
+	)
+}
+
+fn global_cors(origin string, method string) ?bucketcfg.CorsRule {
+	raw := first_set(['VFS_CORS_ALLOWED_ORIGINS', 'RUSTFS_CORS_ALLOWED_ORIGINS', 'ENV_CORS_ALLOWED_ORIGINS'])
+	if raw.len == 0 {
+		return none
+	}
+	for part in raw.split(',') {
+		allowed := part.trim_space()
+		if allowed != '*' && allowed != origin {
+			continue
+		}
+		return bucketcfg.CorsRule{
+			origins: [origin]
+			methods: [method]
+			headers: ['*']
+		}
+	}
+	return none
+}
+
+fn first_set(names []string) string {
+	for name in names {
+		value := os.getenv(name)
+		if value.len > 0 {
+			return value
+		}
+	}
+	return ''
+}
+
+struct ObjectLambda {
+	url string
+}
+
+fn (s Service) maybe_lambda(target Target, body string, stat store.Stat) http.Response {
+	raw := s.volume.get_doc(target.bucket, 'object-lambda') or { return object_ok(body, stat) }
+	config := json2.decode[ObjectLambda](raw.bytestr()) or { return object_ok(body, stat) }
+	if config.url.len == 0 {
+		return object_ok(body, stat)
+	}
+	resp := http.post(config.url, body) or {
+		return failure(http.Status.bad_gateway, 'InternalError', 'object lambda failed', target.bucket,
+			target.key)
+	}
+	if resp.status_code >= 300 {
+		return failure(http.Status.bad_gateway, 'InternalError', 'object lambda status ${resp.status_code}',
+			target.bucket, target.key)
+	}
+	return object_ok(resp.body, stat)
 }
 
 fn (s Service) anonymous_policy(method http.Method, target Target) bool {

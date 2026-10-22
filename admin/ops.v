@@ -278,7 +278,11 @@ fn (s Service) dispatch(path string, req http.Request, query urllib.Values) ?htt
 	if path == '/v3/rebalance' && req.method == .post {
 		action := query.get('action') or { return bad('missing action') }
 		state := s.volume.rebalance(action) or { return failed('${err}') }
-		return http.new_response(status: .ok, body: '{"state":"${state}"}')
+		mut moved := 0
+		if action == 'start' {
+			moved = s.volume.rebalance_copy() or { return failed('${err}') }
+		}
+		return http.new_response(status: .ok, body: '{"state":"${state}","moved":${moved}}')
 	}
 	if path == '/v3/download' && req.method == .get {
 		bucket := query.get('bucket') or { return bad('missing bucket') }
@@ -331,6 +335,9 @@ fn (s Service) dispatch(path string, req http.Request, query urllib.Values) ?htt
 	if path == '/v3/replication/retry' && req.method == .post {
 		done := s.volume.retry_replication() or { return failed('${err}') }
 		return http.new_response(status: .ok, body: '{"delivered":${done}}')
+	}
+	if response := s.surface(path, req, query) {
+		return response
 	}
 	return none
 }
@@ -512,5 +519,6 @@ fn (s Service) scan(query urllib.Values) http.Response {
 		time.now().unix()
 	}
 	worker.lifecycle(s.volume, now) or { return failed('${err}') }
+	s.volume.trace('scanner', 'at=${now}')
 	return http.new_response(status: .ok, body: '')
 }

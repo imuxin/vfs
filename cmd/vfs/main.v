@@ -11,6 +11,7 @@ import erasure
 import extract
 import ftp
 import iam
+import inspect
 import kms
 import lifecycle
 import meta
@@ -30,6 +31,9 @@ fn main() {
 		println('usage: vfs server <volume>{ <volume>} [addr]')
 		println('       vfs info')
 		println('       vfs diagnose <log-file>')
+		println('       vfs tls inspect <pem>')
+		println('       vfs inspect bucket-meta <file>')
+		println('       vfs connect <command>')
 		return
 	}
 	match args[0] {
@@ -73,6 +77,43 @@ fn main() {
 				exit(1)
 			}
 			println('selftest ok')
+		}
+		'tls' {
+			if args.len < 3 || args[1] != 'inspect' {
+				eprintln('usage: vfs tls inspect <pem>')
+				exit(2)
+			}
+			text := os.read_file(args[2]) or {
+				eprintln('vfs: ${err}')
+				exit(1)
+			}
+			report := inspect.tls_text(text) or {
+				eprintln('vfs: ${err}')
+				exit(1)
+			}
+			println(report)
+		}
+		'inspect' {
+			if args.len < 3 || args[1] != 'bucket-meta' {
+				eprintln('usage: vfs inspect bucket-meta <file>')
+				exit(2)
+			}
+			text := os.read_file(args[2]) or {
+				eprintln('vfs: ${err}')
+				exit(1)
+			}
+			report := inspect.bucket_meta(text) or {
+				eprintln('vfs: ${err}')
+				exit(1)
+			}
+			println(report)
+		}
+		'connect' {
+			report := inspect.connect(args[1..]) or {
+				eprintln('vfs: ${err}')
+				exit(1)
+			}
+			println(report)
 		}
 		else {
 			eprintln('unknown command: ${args[0]}')
@@ -143,6 +184,10 @@ fn serve(patterns []string, addr string) ! {
 	ftp_addr := env_or('VFS_FTP_ADDR', ':8021')
 	if ftp_addr != 'off' {
 		spawn ftp.serve(volume, creds, directory, ftp_addr)
+	}
+	ftps_addr := env_or('VFS_FTPS_ADDR', ':8022')
+	if ftps_addr != 'off' {
+		spawn ftp.serve_ftps(ftps_addr)
 	}
 	dav_addr := env_or('VFS_WEBDAV_ADDR', ':8080')
 	if dav_addr != 'off' {

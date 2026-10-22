@@ -27,12 +27,20 @@ pub:
 	headers []string
 }
 
+pub struct Route {
+pub:
+	prefix   string
+	replace  string
+	redirect string
+}
+
 pub struct Website {
 pub:
 	index     string
 	error_doc string
 	redirect  string
 	host      string
+	rules     []Route
 }
 
 // website_key is the object a website host should read. An empty option means
@@ -41,10 +49,34 @@ pub fn website_key(site Website, host string, key string) ?string {
 	if site.host.len == 0 || host != site.host {
 		return none
 	}
+	for rule in site.rules {
+		if rule.prefix.len > 0 && (key == rule.prefix || key.starts_with(rule.prefix)) {
+			if rule.replace.len > 0 {
+				return rule.replace + key[rule.prefix.len..]
+			}
+		}
+	}
 	if key.len == 0 || key.ends_with('/') {
 		return key + site.index
 	}
 	return key
+}
+
+// website_redirect is a routing rule that answers with a location instead of
+// an object. An empty result means the request should read an object.
+pub fn website_redirect(site Website, host string, key string) string {
+	if site.host.len == 0 || host != site.host {
+		return ''
+	}
+	for rule in site.rules {
+		if rule.redirect.len == 0 || rule.prefix.len == 0 {
+			continue
+		}
+		if key == rule.prefix || key.starts_with(rule.prefix) {
+			return rule.redirect
+		}
+	}
+	return ''
 }
 
 pub struct Encryption {

@@ -144,11 +144,11 @@ pub fn (v Volume) zip_prefix(bucket string, prefix string) ![]u8 {
 }
 
 pub fn (v Volume) pools() []pool.Set {
-	return pool.sets_of([v.drives.len])
+	return v.pool_layout().sets()
 }
 
 pub fn (v Volume) decommission_pool(index int) ! {
-	pool.decommission(v.pools().len, index)!
+	v.save_layout(v.pool_layout().decommission(index)!)!
 }
 
 pub fn (v Volume) rebalance(action string) !string {
@@ -157,7 +157,10 @@ pub fn (v Volume) rebalance(action string) !string {
 	}
 	mut balance := v.balance
 	if action == 'start' {
-		balance.start(v.pools().len)!
+		if v.pool_layout().members.len < 2 {
+			return error('layout does not allow rebalance')
+		}
+		balance.start(v.pool_layout().members.len)!
 	} else if action == 'stop' {
 		balance.stop()
 	} else if action != 'status' {
