@@ -1082,25 +1082,35 @@ fn (v Volume) unseal(bucket string, key string, sealed []u8, record meta.Object,
 	return error('unsupported encryption scheme')
 }
 
-fn (v Volume) put_shards(bucket string, key string, version string, stored []u8, shift int) ! {
-	shards := erasure.encode(v.layout, stored)!
+// geometry_of is the erasure layout one object was written with. Reduced
+// redundancy keeps a single parity shard; every other accepted class uses the
+// set default. Reads and heals must use this, not the volume default, or a
+// reduced object would be rebuilt with the wrong stripe.
+fn (v Volume) geometry_of(class string) !erasure.Layout {
+	return layout.plan(v.drives.len, class)
+}
+
+fn (v Volume) put_shards(bucket string, key string, version string, stored []u8, shift int, geometry erasure.Layout) ! {
+	shards := erasure.encode(geometry, stored)!
 	mut wrote := 0
+	width := geometry.total()
 	for shard in shards {
-		drive_index := (shard.index + shift) % v.layout.total()
+		drive_index := (shard.index + shift) % width
 		base := os.join_path(version_dir(bucket, key, version), shard_file)
 		framed := bitrot.frame(v.bitrot, shard.data)
 		v.drives[drive_index].write(base, framed) or { continue }
 		wrote++
 	}
-	if wrote < layout.write_quorum(v.layout.total(), v.layout.parity_shards) {
+	if wrote < layout.write_quorum(width, geometry.parity_shards) {
 		return error('write quorum not met')
 	}
 }
 
 fn (v Volume) write_version(bucket string, key string, version string, stored []u8, plain []u8, content_type string, user_meta map[string]string, tags map[string]string, sealed_env envelope.Envelope, storage_class string, codec_name string, checksum_alg string, sum string, kms_key_id string) ! {
-	shift := layout.rotate(v.distribution, key, v.layout.total(), v.deploy_id)
-	v.put_shards(bucket, key, version, stored, shift)!
 	class := if storage_class.len > 0 { storage_class } else { 'STANDARD' }
+	geometry := v.geometry_of(class)!
+	shift := layout.rotate(v.distribution, key, geometry.total(), v.deploy_id)
+	v.put_shards(bucket, key, version, stored, shift, geometry)!
 	hold_mode, hold_until := v.default_hold(bucket)
 	record := meta.Object{
 		key:           key
@@ -1201,10 +1211,11 @@ fn (v Volume) get_version(bucket string, key string, version string, customer_ke
 
 fn (v Volume) read_shards(bucket string, key string, version string, size i64, record meta.Object) ![]u8 {
 	algo := bitrot.parse(record.bitrot)!
-	mut shards := []?erasure.Shard{len: v.layout.total()}
+	geometry := v.geometry_of(record.storage_class)!
+	mut shards := []?erasure.Shard{len: geometry.total()}
 	mut present := 0
 	shift := record.placement
-	width := v.layout.total()
+	width := geometry.total()
 	for index in 0 .. width {
 		base := os.join_path(version_dir(bucket, key, version), shard_file)
 		framed := v.drives[index].read(base) or { continue }
@@ -1220,7 +1231,7 @@ fn (v Volume) read_shards(bucket string, key string, version string, size i64, r
 	if present < layout.response_quorum(width) {
 		return error('read quorum not met')
 	}
-	return erasure.decode(v.layout, shards, int(size))
+	return erasure.decode(geometry, shards, int(size))
 }
 
 pub fn (v Volume) stat_version(bucket string, key string, version string) !Stat {

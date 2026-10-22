@@ -554,6 +554,32 @@ fn (s Service) restore_object(req http.Request, target Target) http.Response {
 	return empty(http.Status.accepted)
 }
 
+// bypass_retention is true only when the caller sends the governance bypass
+// header and holds s3:BypassGovernanceRetention. Compliance ignores the flag
+// inside the volume. A header without the permission is a denial, so a
+// write-only key cannot skip retention by adding the header.
+fn (s Service) bypass_retention(req http.Request, target Target) !bool {
+	header := req.header.get_custom('x-amz-bypass-governance-retention') or { '' }
+	if header != 'true' {
+		return false
+	}
+	verified := auth.verify(req, s.creds) or {
+		return error('governance bypass is not permitted')
+	}
+	if verified.none {
+		return error('governance bypass is not permitted')
+	}
+	directory := s.directory or { return true }
+	allowed := directory.allows(verified.identity.access_key, 's3:BypassGovernanceRetention',
+		resource_of(target)) or {
+		return error('governance bypass is not permitted')
+	}
+	if !allowed {
+		return error('governance bypass is not permitted')
+	}
+	return true
+}
+
 fn (s Service) delete(req http.Request, target Target) http.Response {
 	if target.key.len == 0 {
 		if response := s.bucket_extra(.delete, req, target) {
@@ -581,8 +607,10 @@ fn (s Service) delete(req http.Request, target Target) http.Response {
 		return empty(http.Status.no_content)
 	}
 	if version_id := target.query.get('versionId') {
-		bypass := req.header.get_custom('x-amz-bypass-governance-retention') or { '' }
-		s.volume.delete_version(target.bucket, target.key, version_id, bypass == 'true') or {
+		bypass := s.bypass_retention(req, target) or {
+			return failure(http.Status.forbidden, 'AccessDenied', '${err}', target.bucket, target.key)
+		}
+		s.volume.delete_version(target.bucket, target.key, version_id, bypass) or {
 			return storage_failure(err, target)
 		}
 		return empty(http.Status.no_content)
@@ -621,7 +649,8 @@ fn storage_failure(err IError, target Target) http.Response {
 		'BucketAlreadyExists'
 	} else if msg.contains('not empty') {
 		'BucketNotEmpty'
-	} else if msg.contains('invalid') || msg.contains('must') || msg.contains('requires customer key') {
+	} else if msg.contains('unsupported storage class') || msg.contains('invalid') || msg.contains('must')
+		|| msg.contains('requires customer key') {
 		'InvalidArgument'
 	} else if msg.contains('authentication failed') {
 		'AccessDenied'
@@ -635,6 +664,8 @@ fn storage_failure(err IError, target Target) http.Response {
 		'ServiceUnavailable'
 	} else if msg.contains('lock held') {
 		'OperationAborted'
+	} else if msg.contains('shard') || msg.contains('read quorum') {
+		'InternalError'
 	} else {
 		eprintln('vfs: ${target.bucket}/${target.key}: ${msg}')
 		'InternalError'
