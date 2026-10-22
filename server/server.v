@@ -9,6 +9,7 @@ import net.http
 import net.urllib
 import admin
 import iceberg
+import rpc
 import s3
 import swift
 import webdav
@@ -35,6 +36,9 @@ pub fn (mut e Endpoint) handle(req http.Request) http.Response {
 	if path == '/health' || path.starts_with('/health/') {
 		return e.health(req)
 	}
+	if path.starts_with('/rustfs/rpc/') {
+		return rpc.serve(req, e.service.volume, rpc_secret(e))
+	}
 	if !e.dav_only && (path.starts_with('/auth/v1.0') || path.starts_with('/v1/')) {
 		return e.swift().handle(req)
 	}
@@ -59,6 +63,19 @@ fn request_path(url string) string {
 		}
 	}
 	return raw.all_before('?')
+}
+
+fn rpc_secret(e Endpoint) string {
+	for name in ['VFS_RPC_SECRET', 'RUSTFS_RPC_SECRET'] {
+		value := os.getenv(name)
+		if value.len > 0 {
+			return value
+		}
+	}
+	if configured := e.admin {
+		return configured.signer
+	}
+	return ''
 }
 
 fn (e Endpoint) health(req http.Request) http.Response {

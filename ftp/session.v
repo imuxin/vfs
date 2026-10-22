@@ -28,17 +28,20 @@ pub fn (mut s Session) command(raw string) string {
 	}
 	verb, arg := split_command(line)
 	upper := verb.to_upper()
-	if upper !in ['USER', 'PASS', 'QUIT'] && !s.authed {
+	if upper !in ['USER', 'PASS', 'QUIT', 'AUTH', 'FEAT', 'NOOP'] && !s.authed {
 		return '530 not logged in'
 	}
 	return match upper {
 		'USER' { s.user(arg) }
 		'PASS' { s.pass(arg) }
 		'QUIT' { '221 goodbye' }
+		'AUTH' { s.auth_tls(arg) }
 		'SYST' { '215 UNIX Type: L8' }
 		'TYPE' { '200 type set' }
 		'NOOP' { '200 ok' }
 		'FEAT' { '211-features\r\n PASV\r\n UTF8\r\n211 end' }
+		'APPE' { '502 restart and append are not supported' }
+		'REST' { '502 restart and append are not supported' }
 		'PWD' { '257 "${s.pwd()}"' }
 		'CWD' { s.cwd(arg) }
 		'CDUP' { s.cwd('..') }
@@ -68,6 +71,14 @@ pub fn (mut s Session) complete_store(data []u8) string {
 		return '550 ${err}'
 	}
 	return '226 transfer complete'
+}
+
+fn (mut s Session) auth_tls(arg string) string {
+	if arg.to_upper() != 'TLS' {
+		return '504 unsupported security'
+	}
+	// A plaintext listener must not pretend the control connection is encrypted.
+	return '534 TLS is not available on this listener'
 }
 
 fn (mut s Session) user(name string) string {

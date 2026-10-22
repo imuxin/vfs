@@ -39,7 +39,14 @@ fn (s Service) select_object(req http.Request, target Target) http.Response {
 	}
 	input := between(req.data, '<InputSerialization>', '</InputSerialization>') or { '' }
 	output := between(req.data, '<OutputSerialization>', '</OutputSerialization>') or { '' }
+	if compression := between(input, '<CompressionType>', '</CompressionType>') {
+		if compression.len > 0 && compression != 'NONE' {
+			return failure(http.Status.bad_request, 'InvalidRequest',
+				'compression combination is not supported', target.bucket, target.key)
+		}
+	}
 	json_in := input.contains('<JSON>')
+	parquet_in := input.contains('<Parquet>')
 	as_json := output.contains('<JSON>') || (input.len == 0 && req.data.contains('<JSON>'))
 	body := s.volume.get(target.bucket, target.key, []u8{}) or {
 		if '${err}'.contains('archived') {
@@ -54,13 +61,21 @@ fn (s Service) select_object(req http.Request, target Target) http.Response {
 		where_value:  parsed.where_value
 		as_json:      as_json
 	}
-	out := if json_in {
-		query.eval_json(selected, body.bytestr()) or {
+	text := if parquet_in {
+		query.parquet_csv(body) or {
 			return failure(http.Status.bad_request, 'InvalidRequest', '${err}', target.bucket,
 				target.key)
 		}
 	} else {
-		query.eval_csv(selected, body.bytestr()) or {
+		body.bytestr()
+	}
+	out := if json_in {
+		query.eval_json(selected, text) or {
+			return failure(http.Status.bad_request, 'InvalidRequest', '${err}', target.bucket,
+				target.key)
+		}
+	} else {
+		query.eval_csv(selected, text) or {
 			return failure(http.Status.bad_request, 'InvalidRequest', '${err}', target.bucket,
 				target.key)
 		}

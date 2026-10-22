@@ -29,5 +29,6 @@ pub fn (v Volume) repair(bucket_name string, key string) !int {
 		v.drives[drive_index].write(path, bitrot.frame(algo, shard.data))!
 		restored++
 	}
+	v.trace('heal', '${bucket_name}/${key} restored=${restored}')
 	return restored
 }

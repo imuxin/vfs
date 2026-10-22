@@ -19,6 +19,13 @@ pub fn serve(volume store.Volume, creds auth.Credentials, directory ?iam.Directo
 	}
 }
 
+// serve_ftps is the FTPS port. This build has no TLS listener, so it does not
+// accept connections: a cleartext socket on the FTPS port would be the wrong
+// service. AUTH TLS on the plain FTP port reports the same limit.
+pub fn serve_ftps(addr string) {
+	eprintln('vfs: ftps ${addr}: TLS listener is not available; not serving plaintext')
+}
+
 pub fn serve_one(mut listener net.TcpListener, volume store.Volume, creds auth.Credentials, directory ?iam.Directory) {
 	mut conn := listener.accept() or { return }
 	talk(conn, volume, creds, directory)

@@ -71,4 +71,5 @@ pub fn run(volume store.Volume, switches Switches) ! {
 		volume.drain_migrate()!
 	}
 	volume.refresh_usage()!
+	volume.purge_kms(now, 7 * 86400)
 }

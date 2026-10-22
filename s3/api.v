@@ -4,6 +4,7 @@
 // the same code serves the process and a test.
 module s3
 
+import os
 import net.http
 import net.urllib
 import crypto.md5
@@ -289,7 +290,7 @@ fn (s Service) get(req http.Request, target Target) http.Response {
 		body := s.volume.get_version_bytes(target.bucket, target.key, version_id, customer_key) or {
 			return storage_failure(err, target)
 		}
-		return object_ok(body.bytestr(), stat)
+		return s.maybe_lambda(target, body.bytestr(), stat)
 	}
 	stat := s.volume.stat(target.bucket, target.key) or { return storage_failure(err, target) }
 	if stat.delete_marker {
@@ -300,7 +301,7 @@ fn (s Service) get(req http.Request, target Target) http.Response {
 		return verdict_response(verdict, target)
 	}
 	body := s.read_object(req, target) or { return storage_failure(err, target) }
-	return object_ok(body, stat)
+	return s.maybe_lambda(target, body, stat)
 }
 
 // version_stat reads one version when an id is given and the current version
@@ -770,6 +771,11 @@ fn user_metadata(req http.Request) map[string]string {
 			collected[lower.all_after('x-amz-meta-')] = req.header.get_custom(key) or { '' }
 		}
 	}
+	if location := req.header.get_custom('x-amz-website-redirect-location') {
+		if location.len > 0 {
+			collected['website-redirect-location'] = location
+		}
+	}
 	return collected
 }
 
@@ -834,6 +840,9 @@ fn sse_of(req http.Request) !(string, []u8) {
 }
 
 fn sse_customer(req http.Request) !(string, []u8) {
+	if sse_c_requires_tls() && !request_is_tls(req) {
+		return error('SSE-C must use TLS')
+	}
 	algorithm := req.header.get_custom('x-amz-server-side-encryption-customer-algorithm') or { '' }
 	if algorithm != 'AES256' {
 		return error('SSE-C only supports AES256')
@@ -852,6 +861,19 @@ fn sse_customer(req http.Request) !(string, []u8) {
 		return error('SSE-C key checksum does not match')
 	}
 	return 'SSE-C', key
+}
+
+fn sse_c_requires_tls() bool {
+	raw := os.getenv('VFS_SSE_C_REQUIRE_TLS').to_lower()
+	return raw == '1' || raw == 'true' || raw == 'on'
+}
+
+fn request_is_tls(req http.Request) bool {
+	if req.url.to_lower().starts_with('https://') {
+		return true
+	}
+	proto := req.header.get_custom('x-forwarded-proto') or { '' }
+	return proto.to_lower() == 'https'
 }
 
 // split_copy_source reads the x-amz-copy-source header, which is `/bucket/key`

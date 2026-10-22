@@ -1,4 +1,5 @@
 replicaCount: 1
+distributed: false
 image:
   repository: vfs
   tag: "0.1.0"

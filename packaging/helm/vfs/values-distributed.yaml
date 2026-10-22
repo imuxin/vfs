@@ -1,0 +1,14 @@
+replicaCount: 4
+distributed: true
+image:
+  repository: vfs
+  tag: "0.1.0"
+service:
+  port: 9000
+volumes:
+  - /data/disk0
+  - /data/disk1
+  - /data/disk2
+  - /data/disk3
+accessKey: vfsadmin
+secretKey: vfsadmin

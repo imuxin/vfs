@@ -15,7 +15,12 @@ spec:
       containers:
         - name: vfs
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          args: ["server", "/data", ":9000"]
+          args:
+            - server
+            {{- range .Values.volumes }}
+            - {{ . | quote }}
+            {{- end }}
+            - ":9000"
           ports:
             - containerPort: {{ .Values.service.port }}
           env:
@@ -24,8 +29,17 @@ spec:
             - name: VFS_SECRET_KEY
               value: {{ .Values.secretKey | quote }}
           volumeMounts:
-            - name: data
-              mountPath: /data
+            {{- range $i, $path := .Values.volumes }}
+            - name: data-{{ $i }}
+              mountPath: {{ $path }}
+            {{- end }}
       volumes:
-        - name: data
+        {{- range $i, $path := .Values.volumes }}
+        - name: data-{{ $i }}
+          {{- if $.Values.distributed }}
+          hostPath:
+            path: {{ $path }}
+          {{- else }}
           emptyDir: {}
+          {{- end }}
+        {{- end }}

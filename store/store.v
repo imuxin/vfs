@@ -389,7 +389,16 @@ fn (v Volume) put_extract(req PutRequest) !Stat {
 // get rebuilds the current version. One missing shard is reconstructed.
 // customer_key is required only for SSE-C objects and ignored otherwise.
 pub fn (v Volume) get(bucket string, key string, customer_key []u8) ![]u8 {
-	body := v.get_version(bucket, key, v.current(bucket, key)!, customer_key)!
+	version := v.current(bucket, key) or {
+		if !'${err}'.contains('object not found') {
+			return err
+		}
+		body := v.bytes_xl(bucket, key)!
+		v.count_metric('get')
+		v.audit('s3:GetObject', bucket, key)
+		return body
+	}
+	body := v.get_version(bucket, key, version, customer_key)!
 	v.count_metric('get')
 	v.audit('s3:GetObject', bucket, key)
 	return body
@@ -416,7 +425,13 @@ fn clamp_range(start i64, end i64, size i64) !(int, int) {
 
 // stat reads the current version's record.
 pub fn (v Volume) stat(bucket string, key string) !Stat {
-	return v.stat_version(bucket, key, v.current(bucket, key)!)
+	version := v.current(bucket, key) or {
+		if !'${err}'.contains('object not found') {
+			return err
+		}
+		return v.stat_xl(bucket, key)
+	}
+	return v.stat_version(bucket, key, version)
 }
 
 // delete removes the current version when versioning is off. With versioning
@@ -921,6 +936,9 @@ fn (v Volume) count_metric(name string) {
 
 fn (v Volume) audit(action string, bucket_name string, key string) {
 	raw := v.drives[0].read('.vfs.sys/audit.json') or { return }
+	if raw.bytestr().replace(' ', '').contains('"enabled":false') {
+		return
+	}
 	config := notify.decode(raw.bytestr()) or { return }
 	notify.send(config, notify.Event{
 		event:  action
