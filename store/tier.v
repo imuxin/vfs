@@ -87,7 +87,8 @@ pub fn (v Volume) restore_object(bucket string, key string, days int, now i64) !
 	}
 	remote := v.tier_named(record.tier)!
 	stored := v.archive().get(remote, bucket, tier_object_key(key, version))!
-	v.put_shards(bucket, key, version, stored, record.placement)!
+	geometry := v.geometry_of(record.storage_class)!
+	v.put_shards(bucket, key, version, stored, record.placement, geometry)!
 	until := now + i64(days) * 86400
 	v.write_record(bucket, key, version, meta.Object{
 		...record

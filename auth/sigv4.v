@@ -247,6 +247,48 @@ fn header_value(req http.Request, name string) string {
 	return got.trim_space()
 }
 
+// Signer is the client half of header authentication. It fills the same
+// canonical request the verifier rebuilds, so a scenario and a real client
+// cannot disagree about what was signed.
+pub struct Signer {
+pub:
+	access_key string
+	secret_key string
+	region     string = 'us-east-1'
+	service    string = 's3'
+	host       string = '127.0.0.1:9000'
+}
+
+// sign returns a copy of req with host, payload hash, date, and Authorization
+// set. Headers the caller already added stay unsigned unless they are the
+// three this function owns; the verifier only checks the signed set.
+pub fn (s Signer) sign(req http.Request) !http.Request {
+	if req.url.len == 0 {
+		return error('request url is required')
+	}
+	mut signed_req := req
+	amz := time.utc().custom_format('YYYYMMDDTHHmmss') + 'Z'
+	payload := hex.encode(sha256.sum256(signed_req.data.bytes()))
+	signed_req.header.add_custom('host', s.host)!
+	signed_req.header.add_custom('x-amz-date', amz)!
+	signed_req.header.add_custom('x-amz-content-sha256', payload)!
+	signed_req.host = s.host
+	names := ['host', 'x-amz-content-sha256', 'x-amz-date']
+	parsed := HeaderAuth{
+		access_key: s.access_key
+		date:       amz[..8]
+		region:     s.region
+		service:    s.service
+		signed:     names
+	}
+	canonical := canonical_request(signed_req, names)
+	string_to_sign := 'AWS4-HMAC-SHA256\n${amz}\n${scope(parsed)}\n${hex256(canonical.bytes())}'
+	signature := hex.encode(signing_key_sign(s.secret_key, parsed, string_to_sign))
+	authorization := 'AWS4-HMAC-SHA256 Credential=${s.access_key}/${scope(parsed)}, SignedHeaders=${names.join(';')}, Signature=${signature}'
+	signed_req.header.add(.authorization, authorization)
+	return signed_req
+}
+
 fn signing_key_sign(secret string, parsed HeaderAuth, string_to_sign string) []u8 {
 	date := hmac.new('AWS4${secret}'.bytes(), parsed.date.bytes(), sha256.sum256, sha256.block_size)
 	region := hmac.new(date, parsed.region.bytes(), sha256.sum256, sha256.block_size)

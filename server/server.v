@@ -6,6 +6,7 @@ module server
 
 import os
 import net.http
+import net.urllib
 import admin
 import iceberg
 import s3
@@ -22,7 +23,8 @@ pub mut:
 }
 
 pub fn (mut e Endpoint) handle(req http.Request) http.Response {
-	if req.url.starts_with('/iceberg/v1') || req.url.starts_with('/_iceberg/v1') {
+	path := request_path(req.url)
+	if path.starts_with('/iceberg/v1') || path.starts_with('/_iceberg/v1') {
 		root := if e.service.volume.drives.len == 0 {
 			os.temp_dir()
 		} else {
@@ -30,10 +32,10 @@ pub fn (mut e Endpoint) handle(req http.Request) http.Response {
 		}
 		return iceberg.handle(req, root)
 	}
-	if req.url.starts_with('/health') {
+	if path == '/health' || path.starts_with('/health/') {
 		return e.health(req)
 	}
-	if !e.dav_only && (req.url.starts_with('/auth/v1.0') || req.url.starts_with('/v1/')) {
+	if !e.dav_only && (path.starts_with('/auth/v1.0') || path.starts_with('/v1/')) {
 		return e.swift().handle(req)
 	}
 	if e.dav_only || webdav.wants(req) {
@@ -47,8 +49,20 @@ pub fn (mut e Endpoint) handle(req http.Request) http.Response {
 	return e.service.handle(req)
 }
 
+// request_path is the path the router matches. A listening server supplies an
+// absolute path; a caller that already parsed a full URL may pass that instead.
+fn request_path(url string) string {
+	mut raw := url
+	if url.contains('://') {
+		if parsed := urllib.parse(url) {
+			raw = parsed.path
+		}
+	}
+	return raw.all_before('?')
+}
+
 fn (e Endpoint) health(req http.Request) http.Response {
-	path := req.url.all_before('?')
+	path := request_path(req.url)
 	if path == '/health/ready' || path.starts_with('/health/ready/') {
 		if !e.service.volume.ready() {
 			return http.new_response(

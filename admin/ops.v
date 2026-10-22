@@ -107,7 +107,7 @@ fn (s Service) dispatch(path string, req http.Request, query urllib.Values) ?htt
 		return http.new_response(status: .ok, body: '{"migrated":${done}}')
 	}
 	if path == '/v3/scanner' && req.method == .post {
-		return s.scan()
+		return s.scan(query)
 	}
 	if path == '/v3/service-account' && req.method == .put {
 		return s.put_service_account(req)
@@ -498,7 +498,19 @@ fn (s Service) migrate(query urllib.Values) http.Response {
 	return http.new_response(status: .ok, body: '{"queued":${queued}}')
 }
 
-fn (s Service) scan() http.Response {
-	worker.lifecycle(s.volume, time.now().unix()) or { return failed('${err}') }
+// scan runs one lifecycle pass. `at` is a unix timestamp the pass treats as
+// now, so an operator can evaluate expiry without waiting out the rule. The
+// default is the current time.
+fn (s Service) scan(query urllib.Values) http.Response {
+	now := if raw := query.get('at') {
+		stamp := raw.i64()
+		if stamp <= 0 {
+			return bad('at must be a unix timestamp')
+		}
+		stamp
+	} else {
+		time.now().unix()
+	}
+	worker.lifecycle(s.volume, now) or { return failed('${err}') }
 	return http.new_response(status: .ok, body: '')
 }

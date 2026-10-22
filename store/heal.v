@@ -15,9 +15,10 @@ pub fn (v Volume) repair(bucket_name string, key string) !int {
 	}
 	stored_len := if record.stored_size > 0 { record.stored_size } else { record.size }
 	stored := v.read_shards(bucket_name, key, version, stored_len, record)!
-	shards := erasure.encode(v.layout, stored)!
+	geometry := v.geometry_of(record.storage_class)!
+	shards := erasure.encode(geometry, stored)!
 	algo := bitrot.parse(record.bitrot)!
-	width := v.layout.total()
+	width := geometry.total()
 	mut restored := 0
 	for shard in shards {
 		drive_index := (shard.index + record.placement) % width
