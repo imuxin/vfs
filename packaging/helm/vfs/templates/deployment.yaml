@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vfs
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: vfs
+  template:
+    metadata:
+      labels:
+        app: vfs
+    spec:
+      containers:
+        - name: vfs
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          args: ["server", "/data", ":9000"]
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          env:
+            - name: VFS_ACCESS_KEY
+              value: {{ .Values.accessKey | quote }}
+            - name: VFS_SECRET_KEY
+              value: {{ .Values.secretKey | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}

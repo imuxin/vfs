@@ -1,0 +1,10 @@
+replicaCount: 1
+image:
+  repository: vfs
+  tag: "0.1.0"
+service:
+  port: 9000
+volumes:
+  - /data
+accessKey: vfsadmin
+secretKey: vfsadmin

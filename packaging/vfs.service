@@ -1,0 +1,14 @@
+[Unit]
+Description=vfs object storage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/vfs server /var/lib/vfs :9000
+Restart=on-failure
+Environment=VFS_ACCESS_KEY=vfsadmin
+Environment=VFS_SECRET_KEY=vfsadmin
+# Set VFS_MASTER_KEY to 64 hex characters before storing SSE-S3 objects.
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+services:
+  vfs:
+    build:
+      context: ..
+      dockerfile: packaging/Dockerfile
+    ports:
+      - "9000:9000"
+    environment:
+      VFS_ACCESS_KEY: vfsadmin
+      VFS_SECRET_KEY: vfsadmin
+      VFS_VOLUMES: /data/disk{0...3}
+    volumes:
+      - disk0:/data/disk0
+      - disk1:/data/disk1
+      - disk2:/data/disk2
+      - disk3:/data/disk3
+volumes:
+  disk0:
+  disk1:
+  disk2:
+  disk3:
